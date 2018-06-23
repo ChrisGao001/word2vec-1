@@ -20,7 +20,7 @@
 
 #define MAX_STRING 100//string 类型的最大长度
 #define EXP_TABLE_SIZE 1000//这里是用来求sigmoid函数,使用的是一种近似的求法，
-#define MAX_EXP 6//只要求球区间为６的即可
+#define MAX_EXP 6//只要求区间为６的即可
 #define MAX_SENTENCE_LENGTH 1000//句子最大长度,及包含词数
 #define MAX_CODE_LENGTH 40//huffman过程中对word进行按词频的huffman code,每个词的最大长度为４０，也可理解为树的高度不会超过２０
 
@@ -30,8 +30,8 @@ typedef float real;                    // Precision of float numbers
 
 struct vocab_word {
   long long cn;//词频
-  int *point;//huffman编码对应内节点的路劲
-  char *word, *code, codelen;//次数组，huffman编码，编码长度
+  int *point;//huffman编码对应内节点的路径
+  char *word, *code, codelen;//词数组，huffman编码，编码长度
 };
 
 char train_file[MAX_STRING], output_file[MAX_STRING];//训练文件和输出文件
@@ -93,6 +93,7 @@ void InitUnigramTable() {
 
 // Reads a single word from a file, assuming space + tab + EOL to be word boundaries
 //读取一个单词，假设每个单词以空格或者tab或者换行符为结尾
+// 如果遇到换行符加word </s>
 void ReadWord(char *word, FILE *fin) {
   int a = 0, ch;
   while (!feof(fin)) {
@@ -125,6 +126,7 @@ int GetWordHash(char *word) {
 }
 
 // Returns position of a word in the vocabulary; if the word is not found, returns -1
+// hash由两部分组成1: hash->pos  2. pos -> vocab
 //返回word 在词汇hash表中的的位置
 int SearchVocab(char *word) {
   unsigned int hash = GetWordHash(word);
@@ -154,7 +156,7 @@ int AddWordToVocab(char *word) {
   strcpy(vocab[vocab_size].word, word);
   vocab[vocab_size].cn = 0;
   vocab_size++;
-  // Reallocate memory if needed 
+  // Reallocate memory if needed 1000 one time 
   if (vocab_size + 2 >= vocab_max_size) {
     vocab_max_size += 1000;
     vocab = (struct vocab_word *)realloc(vocab, vocab_max_size * sizeof(struct vocab_word));
@@ -166,7 +168,7 @@ int AddWordToVocab(char *word) {
 }
 
 // Used later for sorting by word counts
-//比较两个单词的出现频率
+//比较两个单词的出现频率 asc b>a
 int VocabCompare(const void *a, const void *b) {
     return ((struct vocab_word *)b)->cn - ((struct vocab_word *)a)->cn;
 }
@@ -207,7 +209,7 @@ void SortVocab() {
 }
 
 // Reduces the vocabulary by removing infrequent tokens
-//
+// 根据min_reduce过滤word，rehash
 void ReduceVocab() {
   int a, b = 0;
   unsigned int hash;
@@ -507,6 +509,7 @@ void *TrainModelThread(void *id) {
       // in -> hidden
       //输入层到隐藏层
       cw = 0;
+	  // 将窗口内的向量sum
       for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
         c = sentence_position - window + a;
         if (c < 0) continue;
@@ -686,23 +689,25 @@ void TrainModel() {
     }
   } else {
     // Run K-means on the word vectors
+	// iter  迭代次数
     int clcn = classes, iter = 10, closeid;
     int *centcn = (int *)malloc(classes * sizeof(int));
     int *cl = (int *)calloc(vocab_size, sizeof(int));
     real closev, x;
     real *cent = (real *)calloc(classes * layer1_size, sizeof(real));
-
+	// init the class for each of word
     for (a = 0; a < vocab_size; a++) cl[a] = a % clcn;
-
+	// begin to iterate
     for (a = 0; a < iter; a++) {
       for (b = 0; b < clcn * layer1_size; b++) cent[b] = 0;
-      for (b = 0; b < clcn; b++) centcn[b] = 1;
+      for (b = 0; b < clcn; b++) centcn[b] = 1; // the count of the word belong the class
       for (c = 0; c < vocab_size; c++) {
         for (d = 0; d < layer1_size; d++) cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
         centcn[cl[c]]++;
       }
+	  // generate the centoid vector
       for (b = 0; b < clcn; b++) {
-        closev = 0;
+        closev = 0; 
         for (c = 0; c < layer1_size; c++) {
           cent[layer1_size * b + c] /= centcn[b];
           closev += cent[layer1_size * b + c] * cent[layer1_size * b + c];
